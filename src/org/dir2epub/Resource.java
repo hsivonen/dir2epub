@@ -20,8 +20,9 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.text.BreakIterator;
 import java.util.Arrays;
+import java.util.Map;
+import java.util.StringTokenizer;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
@@ -34,10 +35,14 @@ import nu.validator.htmlparser.common.XmlViolationPolicy;
 import nu.validator.htmlparser.dom.HtmlDocumentBuilder;
 
 import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.NodeList;
 import org.xml.sax.InputSource;
 import org.xml.sax.SAXException;
 
 public class Resource {
+
+    private static final String XHTML = "http://www.w3.org/1999/xhtml";
 
     /**
      * Magic numbers. First byte must be unique!
@@ -135,7 +140,9 @@ public class Resource {
     protected final Reporter reporter;
 
     protected Document dom;
-
+    
+    private Resource next = null;
+    
     public Resource(String path, File file, Reporter reporter) {
         super();
         this.path = path;
@@ -606,5 +613,42 @@ public class Resource {
             e.printStackTrace();
         }
         return declaredType;
+    }
+    
+    public void initNext(Map<String, Resource> outputResources) {
+        Document dom = getDom();
+        NodeList links = null;
+        for (int j = 0; j < 2; j++) {
+            if (links == null) {
+                links = dom.getElementsByTagNameNS(XHTML, "link");
+            } else {
+                links = dom.getElementsByTagNameNS(XHTML, "a");
+            }
+            for (int i = 0; i < links.getLength(); i++) {
+                Element link = (Element) links.item(i);
+                if (link.hasAttributeNS(null, "href")
+                        && link.hasAttributeNS(null, "rel")) {
+                    String[] rels = link.getAttributeNS(null, "rel").split(
+                            "[ \\t\\n\\r\\f]+");
+                    for (String rel : rels) {
+                        // Should use ASCII lower casing, but
+                        // Unicode-lowercasing "next" is safe
+                        if ("next".equals(rel.toLowerCase())) {
+                            String href = Dir2Epub.chopHash(Dir2Epub.urlToPath(link.getAttributeNS(null, "href"), path, reporter));
+                            this.next = outputResources.get(href);
+                            if (this.next == null) {
+                                reporter.err("rel=next in " + path + " pointed to a non-existent document " + href + " . Ignoring.");
+                            } else {
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    public Resource getNext() {
+        return next;
     }
 }

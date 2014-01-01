@@ -23,6 +23,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -31,6 +32,7 @@ import java.util.Set;
 
 import nu.validator.htmlparser.impl.NCName;
 
+import org.dir2epub.navigation.NavigationDocument;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.NamedNodeMap;
@@ -49,6 +51,8 @@ public class Dir2Epub {
     private static final String CNS = "urn:oasis:names:tc:opendocument:xmlns:container";
 
     private static final String ONS = "http://www.idpf.org/2007/opf";
+    
+    private static final String NCX = "http://www.daisy.org/z3986/2005/ncx/";
     
     private static final byte[] MIMETYPE = { 'a', 'p', 'p', 'l', 'i', 'c', 'a',
         't', 'i', 'o', 'n', '/', 'e', 'p', 'u', 'b', '+', 'z', 'i', 'p' };
@@ -98,6 +102,10 @@ public class Dir2Epub {
     private boolean refreshExistingManifest = false;
     
     private boolean removeScripting = false;
+
+    private NavigationDocument navigation = null;
+
+    private HashSet<Resource> documents = new HashSet<Resource>();
     
     private Element findUniqueChild(Element parent, String ns, String localName, String notFoundErr, String multipleErr, Reporter reporter) {
         Element child = null;
@@ -173,18 +181,44 @@ public class Dir2Epub {
         
         checkItems();
         
+        for (Resource res : documents) {
+            res.initNext(outputResources);
+        }
+        
         ensureSpine();
+                
+        if (navigation == null || !navigation.hasNonEmptyToc()) {
+            // TODO generate navigation
+        }
         
-        // TODO Generate spine
+        if (ncx == null) {
+            if (outputResources.containsKey("toc.ncx")) {
+                // Can this even happen at this point anymore?
+                throw reporter.fatal("toc.ncx exists but is not an NCX file.");
+            }
+            ncx = new Resource("toc.ncx", NCX, "ncx", reporter);
+            outputResources.put(ncx.getPath(), ncx);
+        }
         
+        if (nav == null) {
+            nav = new Resource(generateTocPath(), XHTML, "html", reporter);
+            Document dom = nav.getDom();
+            Element root = dom.getDocumentElement();
+            // TODO figure out some text for title
+            Element title = dom.createElementNS(XHTML, "title");
+            Element head = dom.createElementNS(XHTML, "head");
+            Element body = dom.createElementNS(XHTML, "body");
+            head.appendChild(title);
+            root.appendChild(head);
+            root.appendChild(body);
+        }
+        
+        // TODO Generate NCX (check existing docTitle, version, etc.)
+                
         // TODO Generate guide
         
-        // TODO Generate NCX
-        
         // TODO Generate metadata
-                
-        outputResources.putAll(inputResources);
-        
+
         EpubWriter w = null;
         try {
             w = new EpubWriter(new FileOutputStream(epubFile), reporter);
@@ -202,6 +236,12 @@ public class Dir2Epub {
         w.close();
     }
     
+    private String generateTocPath() {
+        // TODO Auto-generated method stub
+        return null;
+    }
+
+
     private void ensureSpine() {
         Document dom = opf.getDom();
         Element root = dom.getDocumentElement();
@@ -237,8 +277,173 @@ public class Dir2Epub {
             ncx = outputResources.get(manifestUrlToPath(toc.getAttributeNS(null, "href")));
             assert ncx != null : "Bogus path on the NCX item.";
         }
+     
+        NavigationDocument ncxNavigation = null;
+        NavigationDocument htmlNavigation = null;
+        if (ncx != null) {
+            ncxNavigation = new NavigationDocument(ncx, reporter);
+        }
+        if (nav != null) {
+            htmlNavigation = new NavigationDocument(nav, reporter);
+        }
+        if (ncxNavigation == null) {
+            navigation = htmlNavigation;
+        } else if (htmlNavigation == null) {
+            navigation = ncxNavigation;
+        } else {
+            navigation = new NavigationDocument(ncxNavigation, htmlNavigation, reporter);
+        }
         
-        // TODO Either check the spine or generate one
+        LinkedHashSet<Resource> tocDocs;
+        if (navigation != null && navigation.hasToc()) {
+            tocDocs = navigation.listDocs(outputResources, reporter);
+        } else {
+            tocDocs = new LinkedHashSet<Resource>();
+        }
+        
+        LinkedHashSet<Resource> spineDocs = new LinkedHashSet<Resource>();
+        Node node = spine.getFirstChild();
+        while (node != null) {
+            Node remove = null;
+            if (ONS.equals(node.getNamespaceURI()) && "itemref".equals(node.getLocalName())) {
+                Element itemref = (Element) node;
+                if (itemref.hasAttributeNS(null, "idref")) {
+                    Resource resource = getResourceById(itemref.getAttributeNS(null, "idref"));
+                    if (resource == null) {
+                        reporter.err("<itemref> element did not refer to an <item>. Removing element.");
+                        remove = node;                        
+                    } else {
+                        if (spineDocs.contains(resource)) {
+                            reporter.err("<itemref> element referred to an <item> that was already referred to by an earlier <itemref>. Removing element.");
+                            remove = node;                            
+                        }
+                        spineDocs.add(resource);
+                        documents.remove(resource);
+                    }
+                } else {
+                    reporter.err("<itemref> element had no idref attribute. Removing element.");
+                    remove = node;
+                }
+            }
+            node = node.getNextSibling();
+            if (remove != null) {
+                spine.removeChild(remove);
+            }
+        }
+        
+        if (!spineDocs.isEmpty() && !documents.isEmpty()) {
+                reporter.warn("<spine> was not empty but did not list all (X)HTML documents from the <manifest>.");
+        }
+        documents.removeAll(tocDocs);
+        if (spineDocs.isEmpty()) {
+            spineDocs = tocDocs;
+        } else if (!tocDocs.isEmpty()) {
+            LinkedList<Resource> spineList = new LinkedList<Resource>(spineDocs);
+            LinkedList<Resource> tocList = new LinkedList<Resource>(tocDocs);
+            spineDocs = new LinkedHashSet<Resource>();
+            boolean consumeSpine = !tocList.contains(spineList.getFirst());
+            while (!spineList.isEmpty() && !tocList.isEmpty()) {
+                Resource until = consumeSpine ? tocList.getFirst() : spineList.getFirst();
+                while (consumeSpine ? !spineList.isEmpty() : !tocList.isEmpty()) {
+                    Resource res = consumeSpine ? spineList.removeFirst() : tocList.removeFirst();
+                    spineDocs.add(res);
+                    if (res == until) {
+                        consumeSpine = !consumeSpine;
+                        break;
+                    }
+                }
+            }
+            spineDocs.addAll(spineList);
+            spineDocs.addAll(tocList);
+        }
+        if (!documents.isEmpty()) {
+            LinkedList<Resource> spineList = new LinkedList<Resource>(spineDocs);
+            if (spineList.isEmpty()) {
+                // See if we have only one doc with null getNext. If we do,
+                // let's put that into the spine list and let a later loop 
+                // fill in the rest (assuming that the next links aren't bogus).
+                Resource nullNext = null;
+                for (Resource res : documents) {
+                    if (res.getNext() == null) {
+                        if (nullNext == null || nullNext.getFileName().toLowerCase().startsWith("footno")) {
+                            // LaTeX2HTML calls its footnote doc footnode.html
+                            nullNext = res;
+                        } else {
+                            nullNext = null;
+                            break;
+                        }
+                    }
+                }
+                if (nullNext != null) {
+                    spineList.add(nullNext);
+                }
+            } else {
+                // This iteration is by index, because iterators don't support
+                // this kind of concurrent modification.
+                for (int i = 0; i < spineList.size() && !documents.isEmpty(); i++) {
+                    Resource res = spineList.get(i);
+                    Resource next = res.getNext();
+                    if (documents.remove(next)) {
+                        spineList.add(i + 1, next);
+                    }
+                }
+                
+            }
+            if (!documents.isEmpty()) {
+                // The remaining docs are not reachable from the spine via
+                // rel=next
+                outer: for (;;) {
+                    for (Resource res : documents) {
+                        int index = spineList.indexOf(res.getNext());
+                        if (index >= 0) {
+                            spineList.add(index, res);;
+                            continue outer;
+                        }
+                    }
+                    break;
+                }
+            }
+            if (!documents.isEmpty()) {
+                // Next links alone were not enough to define the order :-(
+                // * Separate potential cover
+                // * Separate toc
+                // * Separate likely bibliography, footnotes, etc.
+                // * Sort the rest in the middle
+
+                // TODO Fit remaining docs into spine
+//                http://www.microformats.org/wiki/book-brainstorming
+            }
+            spineDocs = new LinkedHashSet<Resource>(spineList);
+        } else if (!spineDocs.isEmpty()) {
+            throw reporter.fatal("Empty spine and no documents available to add to the spine.");
+        }
+        
+        // Insert the spine docs that don't yet have <itemref> elements into
+        // the spine
+        Resource itemRefRes = null;
+        for (node = spine.getFirstChild(); node !=null; node = node.getNextSibling()) {
+            if (ONS.equals(node.getNamespaceURI()) && "itemref".equals(node.getLocalName())) {
+                Element itemref = (Element) node;
+                itemRefRes = getResourceById(itemref.getAttributeNS(null, "idref"));
+                break;
+            }
+        }
+        for (Resource resource : spineDocs) {
+            if (resource == itemRefRes) {
+                while (node != null) {
+                    if (ONS.equals(node.getNamespaceURI()) && "itemref".equals(node.getLocalName())) {
+                        Element itemref = (Element) node;
+                        itemRefRes = getResourceById(itemref.getAttributeNS(null, "idref"));
+                        break;
+                    }                    
+                    node = node.getNextSibling();
+                }
+            } else {
+                Element itemref = dom.createElementNS(ONS, "itemref");
+                itemref.setAttributeNS(null, "idref", getIdByResource(resource));
+                spine.insertBefore(itemref, node);
+            }
+        }
     }
 
 
@@ -246,7 +451,40 @@ public class Dir2Epub {
         return ONS.equals(elt.getNamespaceURI()) && "item".equals(elt.getLocalName()) && elt.getParentNode() == manifest;
     }
 
-
+    private Resource getResourceById(String id) {
+        Document dom = opf.getDom();
+        Element root = dom.getDocumentElement();
+        Element manifest = findUniqueChild(root, ONS, "manifest", null, "Multiple <manifest> elements in " + opf.getPath() + ".", reporter);
+        assert manifest != null: "ensureManifest should have created manifest!";
+        for (Node n = manifest.getFirstChild(); n != null; n = n.getNextSibling()) {
+            if (ONS.equals(n.getNamespaceURI())
+                    && "item".equals(n.getLocalName())) {
+                Element item = (Element) n;
+                if (id.equals(item.getAttributeNS(null, "id"))) {
+                    return outputResources.get(manifestUrlToPath(item.getAttributeNS(null, "href")));
+                }
+            }            
+        }
+        return null;
+    }
+    
+    private String getIdByResource(Resource resource) {
+        Document dom = opf.getDom();
+        Element root = dom.getDocumentElement();
+        Element manifest = findUniqueChild(root, ONS, "manifest", null, "Multiple <manifest> elements in " + opf.getPath() + ".", reporter);
+        assert manifest != null: "ensureManifest should have created manifest!";
+        for (Node n = manifest.getFirstChild(); n != null; n = n.getNextSibling()) {
+            if (ONS.equals(n.getNamespaceURI())
+                    && "item".equals(n.getLocalName())) {
+                Element item = (Element) n;
+                if (resource == outputResources.get(manifestUrlToPath(item.getAttributeNS(null, "href")))) {
+                    return item.getAttributeNS(null, "id");
+                }
+            }            
+        }
+        return null;
+    }
+    
     private void checkItems() {
         Document dom = opf.getDom();
         Element root = dom.getDocumentElement();
@@ -333,6 +571,7 @@ public class Dir2Epub {
                     styles.add(item);
                 } else if ("application/xhtml+xml".equals(type)) {
                     docs.add(item);
+                    documents.add(resource);
                 } else if (removeScripting && "text/javascript".equals(type)) {
                     remove.add(item);
                     continue;
@@ -399,7 +638,7 @@ public class Dir2Epub {
             }
         }
 
-        outputResources.clear();
+        inputResources.clear();
     }
 
     private String generateId(Resource resource, Set<String> ids) {
@@ -655,10 +894,10 @@ public class Dir2Epub {
     }
     
     private String manifestUrlToPath(String url) {
-        return urlToPath(url, opf.getPath());
+        return urlToPath(url, opf.getPath(), reporter);
     }
     
-    private boolean isAbsoluteUrl(String url) {
+    public static boolean isAbsoluteUrl(String url) {
         if (url.length() == 0) {
             return false;
         }
@@ -678,7 +917,21 @@ public class Dir2Epub {
         return false;
     }
     
-    private String urlToPath(String url, String basePath) {
+    public static String chopHash(String path) {
+        if (path == null) {
+            return null;
+        }
+        int index = path.indexOf('#');
+        if (index < 0) {
+            return path;
+        }
+        return path.substring(0, index);
+    }
+    
+    public static String urlToPath(String url, String basePath, Reporter reporter) {
+        if (url == null) {
+            return null;
+        }
         if (url.startsWith("//")) {
             throw reporter.fatal("URL " + url + " is a scheme-relative URL where path-relative URL was expected.");            
         } 
@@ -687,6 +940,14 @@ public class Dir2Epub {
         }
         if (isAbsoluteUrl(url)) {
             throw reporter.fatal("URL " + url + " is an absolute URL where path-relative URL was expected.");            
+        }
+        
+        if (url.startsWith("#")) {
+            if (url.length() == 0) {
+                return basePath;
+            } else {
+                return basePath + url;
+            }
         }
         
         int index = basePath.lastIndexOf('/');
@@ -733,7 +994,7 @@ public class Dir2Epub {
         return builder.toString();
     }
     
-    private boolean isHex(char c) {
+    private static boolean isHex(char c) {
         return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')
                 || (c >= 'A' && c <= 'F');
     }
