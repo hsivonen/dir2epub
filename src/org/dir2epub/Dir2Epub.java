@@ -213,8 +213,71 @@ public class Dir2Epub {
             root.appendChild(body);
         }
         
-        // TODO Generate NCX (check existing docTitle, version, etc.)
+        // Update NCX
+        
+        Document dom = ncx.getDom();
+        Element root = dom.getDocumentElement();
+        
+        Element navList = findUniqueChild(root, NCX, "navList", null, "Multiple <navList> elements in NCX", reporter);
+        if (navList == null) {
+            navList = dom.createElementNS(NCX, "navList");
+            root.appendChild(navList);
+        }
+        
+        Element pageList = findUniqueChild(root, NCX, "pageList", null, "Multiple <pageList> elements in NCX", reporter);
+        if (pageList == null) {
+            pageList = dom.createElementNS(NCX, "pageList");
+            root.insertBefore(pageList, navList);
+        }
+
+        Element navMap = findUniqueChild(root, NCX, "navMap", null, "Multiple <navMap> elements in NCX", reporter);
+        if (navMap == null) {
+            navMap = dom.createElementNS(NCX, "navMap");
+            root.insertBefore(navMap, pageList);
+        }
+        
+        navigation.generateNcx(navMap, "navPoint");
+        navigation.generateNcx(pageList, "pageTarget");
+        navigation.generateNcx(navList, "navTarget");
+
+        // Update TOC HTML
+        
+        dom = nav.getDom();
+        root = dom.getDocumentElement();
+        
+        Element toc = null;
+        Element pages = null;
+        Element landmarks = null;
+        
+        Node current = root;
+        Node next;
+        domwalk: for (;;) {
+            if (current.getNodeType() == Node.ELEMENT_NODE) {
+                Element elt = (Element) current;
+
+                if (XHTML.equals(elt.getNamespaceURI()) && "nav".equals(elt.getLocalName()) && elt.hasAttributeNS(OPS, "type")) {
+                    // TODO
+                }
                 
+                if ((next = current.getFirstChild()) != null) {
+                    current = next;
+                    continue;
+                }
+            }
+            for (;;) {
+                if ((next = current.getNextSibling()) != null) {
+                    current = next;
+                    break;
+                }
+                current = current.getParentNode();
+                if (current == root)
+                    break domwalk;
+            }
+        }
+
+        
+        // TODO Generate NCX (check existing docTitle, version, etc.)
+        
         // TODO Generate guide
         
         // TODO Generate metadata
@@ -237,8 +300,13 @@ public class Dir2Epub {
     }
     
     private String generateTocPath() {
-        // TODO Auto-generated method stub
-        return null;
+        String stem = "toc";
+        String candidate = stem + ".xhtml";
+        while (outputResources.containsKey(candidate)) {
+            stem += "_";
+            candidate = stem + ".xhtml";
+        }
+        return candidate;
     }
 
 

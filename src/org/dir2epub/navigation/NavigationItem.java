@@ -24,6 +24,7 @@ import java.util.Map;
 import org.dir2epub.Dir2Epub;
 import org.dir2epub.Reporter;
 import org.dir2epub.Resource;
+import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 
@@ -230,5 +231,24 @@ public class NavigationItem {
     
     private String getHrefWithoutHash() {
         return Dir2Epub.chopHash(this.href);
+    }
+
+    public void generateNcx(Element parent, String name) {
+        Document dom = parent.getOwnerDocument();
+        Element elt = dom.createElementNS(NCX, name);
+        parent.appendChild(elt);
+        Element navLabel = dom.createElementNS(NCX, "navLabel");
+        parent.appendChild(navLabel);
+        Element text = dom.createElementNS(NCX, "text");
+        navLabel.appendChild(text);
+        text.setTextContent(title);
+        if (href != null) {
+            Element content = dom.createElementNS(NCX, "content");
+            parent.appendChild(content);
+            content.setAttributeNS(null, "src", href);
+        }
+        for (NavigationItem item : sublist) {
+            item.generateNcx(elt, name);
+        }
     }
 }

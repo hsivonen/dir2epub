@@ -229,4 +229,25 @@ public class NavigationDocument {
         return set;
     }
 
+    public void generateNcx(Element hierarchy, String name) {
+        for (Node n = hierarchy.getFirstChild(); n != null; n = n.getNextSibling()) {
+            if (NCX.equals(n.getNamespaceURI()) && name.equals(n.getLocalName())) {
+                return;
+            }
+        }
+        NavigationHierarchy hier = null;
+        if ("navPoint".equals(name)) {
+            hier = toc;
+        } else if ("pageTarget".equals(name)) {
+            hier = pageList;
+        } else if ("navTarget".equals(name)) {
+            hier = landmarks;
+        } else {
+            assert false: "Bogus name";
+        }
+        if (hier != null) {
+            hier.generateNcx(hierarchy, name);
+        }
+    }
+
 }

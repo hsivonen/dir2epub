@@ -127,4 +127,23 @@ public class NavigationHierarchy {
             item.listDocs(set, outputResources);
         }        
     }
+
+    public void generateNcx(Element hierarchy, String name) {
+        settitle: if (title != null && title.length() > 0) {
+            for (Node n = hierarchy.getFirstChild(); n != null; n = n.getNextSibling()) {
+                if (NCX.equals(n.getNamespaceURI())
+                        && "navLabel".equals(n.getLocalName())) {
+                    break settitle;  
+                }
+            }
+            Element navLabel = hierarchy.getOwnerDocument().createElementNS(NCX, "navLabel");
+            hierarchy.appendChild(navLabel);
+            Element text = hierarchy.getOwnerDocument().createElementNS(NCX, "text");
+            navLabel.appendChild(text);
+            text.setTextContent(title);
+        }
+        for (NavigationItem item : list) {
+            item.generateNcx(hierarchy, name);
+        }
+    }
 }
