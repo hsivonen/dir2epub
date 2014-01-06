@@ -146,4 +146,27 @@ public class NavigationHierarchy {
             item.generateNcx(hierarchy, name);
         }
     }
+
+    public void generateHtml(Element parent) {
+        settitle: if (title != null && title.length() > 0) {
+            for (Node n = parent.getFirstChild(); n != null; n = n.getNextSibling()) {
+                String local = n.getLocalName();
+                if (XHTML.equals(n.getNamespaceURI())
+                        && ("h1".equals(local) || "h2".equals(local)
+                                || "h3".equals(local) || "h4".equals(local)
+                                || "h5".equals(local) || "h6".equals(local) || "hgroup".equals(local))) {
+                    break settitle;
+                }
+            }
+            Element h1 = parent.getOwnerDocument().createElementNS(XHTML, "h1");
+            h1.setTextContent(title);
+        }
+        if (!list.isEmpty()) {
+            Element ol = parent.getOwnerDocument().createElementNS(XHTML, "ol");
+            parent.appendChild(ol);
+            for (NavigationItem item : list) {
+                item.generateHtml(ol);
+            }
+        }
+    }
 }

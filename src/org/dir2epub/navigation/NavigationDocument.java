@@ -219,6 +219,14 @@ public class NavigationDocument {
         return toc != null && !emptyToc;
     }
 
+    public boolean hasPageList() {
+        return pageList != null ;
+    }
+
+    public boolean hasLandmarks() {
+        return landmarks != null ;
+    }
+
     public LinkedHashSet<Resource> listDocs(Map<String, Resource> outputResources,
             Reporter reporter) {
         LinkedHashSet<Resource> set = new LinkedHashSet<Resource>();
@@ -248,6 +256,18 @@ public class NavigationDocument {
         if (hier != null) {
             hier.generateNcx(hierarchy, name);
         }
+    }
+
+    public void generateHtmlToc(Element parent) {
+        toc.generateHtml(parent);
+    }
+
+    public void generateHtmlPageList(Element parent) {
+        pageList.generateHtml(parent);
+    }
+
+    public void generateHtmlLandmarks(Element parent) {
+        landmarks.generateHtml(parent);
     }
 
 }

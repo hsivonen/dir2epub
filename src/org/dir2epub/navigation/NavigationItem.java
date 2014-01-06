@@ -251,4 +251,25 @@ public class NavigationItem {
             item.generateNcx(elt, name);
         }
     }
+
+    public void generateHtml(Element parent) {
+        Element li = parent.getOwnerDocument().createElementNS(XHTML, "li");
+        parent.appendChild(li);
+        Element aSpan;
+        if (href == null) {
+            aSpan = parent.getOwnerDocument().createElementNS(XHTML, "span");
+        } else {
+            aSpan = parent.getOwnerDocument().createElementNS(XHTML, "a");
+            aSpan.setAttributeNS(null, "href", href);
+        }
+        li.appendChild(aSpan);
+        aSpan.setTextContent(title);
+        if (!sublist.isEmpty()) {
+            Element ol = parent.getOwnerDocument().createElementNS(XHTML, "ol");
+            li.appendChild(ol);
+            for (NavigationItem item : sublist) {
+                item.generateHtml(ol);
+            }
+        }
+    }
 }

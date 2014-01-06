@@ -219,27 +219,33 @@ public class Dir2Epub {
         Element root = dom.getDocumentElement();
         
         Element navList = findUniqueChild(root, NCX, "navList", null, "Multiple <navList> elements in NCX", reporter);
-        if (navList == null) {
+        if (navList == null && navigation.hasLandmarks()) {
             navList = dom.createElementNS(NCX, "navList");
             root.appendChild(navList);
         }
         
         Element pageList = findUniqueChild(root, NCX, "pageList", null, "Multiple <pageList> elements in NCX", reporter);
-        if (pageList == null) {
+        if (pageList == null && navigation.hasPageList()) {
             pageList = dom.createElementNS(NCX, "pageList");
             root.insertBefore(pageList, navList);
         }
 
         Element navMap = findUniqueChild(root, NCX, "navMap", null, "Multiple <navMap> elements in NCX", reporter);
-        if (navMap == null) {
+        if (navMap == null && navigation.hasToc()) {
             navMap = dom.createElementNS(NCX, "navMap");
             root.insertBefore(navMap, pageList);
         }
         
-        navigation.generateNcx(navMap, "navPoint");
-        navigation.generateNcx(pageList, "pageTarget");
-        navigation.generateNcx(navList, "navTarget");
-
+        if (navMap != null) {
+            navigation.generateNcx(navMap, "navPoint");
+        }
+        if (pageList != null) {
+            navigation.generateNcx(pageList, "pageTarget");
+        }
+        if (navList != null) {
+            navigation.generateNcx(navList, "navTarget");
+        }
+        
         // Update TOC HTML
         
         dom = nav.getDom();
@@ -256,7 +262,14 @@ public class Dir2Epub {
                 Element elt = (Element) current;
 
                 if (XHTML.equals(elt.getNamespaceURI()) && "nav".equals(elt.getLocalName()) && elt.hasAttributeNS(OPS, "type")) {
-                    // TODO
+                    String type = elt.getAttributeNS(OPS, "type");
+                    if ("toc".equals(type)) {
+                        toc = elt;
+                    } else if ("page-list".equals(type)) {
+                        pages = elt;
+                    } else if ("landmarks".equals(type)) {
+                        landmarks = elt;
+                    }
                 }
                 
                 if ((next = current.getFirstChild()) != null) {
@@ -275,6 +288,44 @@ public class Dir2Epub {
             }
         }
 
+        Node body = root.getLastChild();
+        while (body != null && !(XHTML.equals(body.getNamespaceURI()) && "body".equals(body.getLocalName()))) {
+            body = body.getPreviousSibling();
+        }
+        if (body == null) {
+            body = dom.createElementNS(XHTML, "body");
+            root.appendChild(body);
+        }
+        
+        if (toc == null && navigation.hasToc()) {
+            toc = dom.createElementNS(XHTML, "nav");
+            toc.setAttributeNS(OPS, "type", "toc");
+            body.appendChild(toc);
+        }
+        
+        if (pages == null && navigation.hasPageList()) {
+            pages = dom.createElementNS(XHTML, "nav");
+            pages.setAttributeNS(OPS, "type", "page-list");
+            body.appendChild(pages);
+        }
+        
+        if (landmarks == null && navigation.hasLandmarks()) {
+            landmarks = dom.createElementNS(XHTML, "nav");
+            landmarks.setAttributeNS(OPS, "type", "landmarks");
+            body.appendChild(landmarks);
+        }
+
+        if (toc != null) {
+            navigation.generateHtmlToc(toc);
+        }
+        if (pages != null) {
+            navigation.generateHtmlPageList(pages);
+        }
+        if (landmarks != null) {
+            navigation.generateHtmlLandmarks(landmarks);
+        }        
+        
+        
         
         // TODO Generate NCX (check existing docTitle, version, etc.)
         
