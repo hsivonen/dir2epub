@@ -54,6 +54,8 @@ public class Dir2Epub {
     
     private static final String NCX = "http://www.daisy.org/z3986/2005/ncx/";
     
+    private static final String DC = "http://purl.org/dc/elements/1.1/";
+
     private static final byte[] MIMETYPE = { 'a', 'p', 'p', 'l', 'i', 'c', 'a',
         't', 'i', 'o', 'n', '/', 'e', 'p', 'u', 'b', '+', 'z', 'i', 'p' };
 
@@ -325,7 +327,54 @@ public class Dir2Epub {
             navigation.generateHtmlLandmarks(landmarks);
         }        
         
+        // Ensure OPF metadata exists
         
+        dom = opf.getDom();
+        root = dom.getDocumentElement();
+        Element metadata = findUniqueChild(root, ONS, "metadata", null, "Multiple <metadata> elements in " + opf.getPath() + ".", reporter);
+        if (metadata != null) {
+            metadata = dom.createElementNS(ONS, "metadata");
+            root.insertBefore(metadata, root.getFirstChild());
+        }
+        
+        // TODO hoist children out of dc-metadata and x-metadata
+        
+        // Figure out title, author, language and book id
+        // EPUB makes this way too complicated!
+        
+        String title = null;
+        String author = null;
+        String language = null;
+        String guid = null;
+        
+        // id
+        
+        String idId = root.getAttributeNS(null, "unique-identifier");
+        Element idNode = getElementById(root, idId);
+        
+        if (idNode != null && idNode.getParentNode() != metadata) {
+            idNode = null;
+            idId = null;
+            reporter.err("The unique-identifier attribute on OPF root points to a node that is not a child of <metadata>.");
+        }
+        
+        if (idNode != null) {
+            if (DC.equals(idNode.getNamespaceURI()) && "identifier".equals(idNode.getLocalName())) {
+                guid = trimWhiteSpace(idNode.getTextContent());
+                if (guid.length() == 0) {
+                    guid = null;
+                }
+            }
+        }
+        
+        // language
+        
+        for (Node n = metadata.getFirstChild(); n != null; n = n.getNextSibling()) {
+            if (DC.equals(n.getNamespaceURI()) && "language".equals(n.getLocalName())) {
+               String lang = checkLang(n.getTextContent());
+               // TODO
+            }
+        }
         
         // TODO Generate NCX (check existing docTitle, version, etc.)
         
@@ -333,6 +382,8 @@ public class Dir2Epub {
         
         // TODO Generate metadata
 
+        // TODO add silly required version attributes to OPF and NCX
+        
         EpubWriter w = null;
         try {
             w = new EpubWriter(new FileOutputStream(epubFile), reporter);
@@ -350,6 +401,55 @@ public class Dir2Epub {
         w.close();
     }
     
+    private String checkLang(String lang) {
+        lang = toAsciiLowerCase(trimWhiteSpace(lang));
+        // TODO
+        return null;
+    }
+
+    public String toAsciiLowerCase(String str) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < str.length(); i++) {
+            char c = str.charAt(i);
+            if (c >= 'A' && c <= 'Z') {
+                c += 0x20;
+            }
+            sb.append(c);
+        }
+        return sb.toString();
+    }
+
+    private String trimWhiteSpace(String str) {
+        int firstNonWhiteSpace = 0;
+        for (int i = 0; i < str.length(); i++) {
+            char c = str.charAt(i);
+            switch (c) {
+                case ' ':
+                case '\t':
+                case '\r':
+                case '\n':
+                    continue;
+                default:
+                    firstNonWhiteSpace = i;
+            }
+        }
+        int lastWhiteSpace = str.length();
+        for (int i = str.length() - 1; i >= 0; i--) {
+            char c = str.charAt(i);
+            switch (c) {
+                case ' ':
+                case '\t':
+                case '\r':
+                case '\n':
+                    continue;
+                default:
+                    lastWhiteSpace = i + 1;
+            }
+        }       
+        return str.substring(firstNonWhiteSpace, lastWhiteSpace);
+    }
+
+
     private String generateTocPath() {
         String stem = "toc";
         String candidate = stem + ".xhtml";
@@ -484,7 +584,7 @@ public class Dir2Epub {
                 Resource nullNext = null;
                 for (Resource res : documents) {
                     if (res.getNext() == null) {
-                        if (nullNext == null || nullNext.getFileName().toLowerCase().startsWith("footno")) {
+                        if (nullNext == null || toAsciiLowerCase(nullNext.getFileName()).startsWith("footno")) {
                             // LaTeX2HTML calls its footnote doc footnode.html
                             nullNext = res;
                         } else {
@@ -678,7 +778,7 @@ public class Dir2Epub {
                 }
                 String type = item.getAttributeNS(null, "media-type").trim();
                 type = resource.checkType("".equals(type) ? null
-                        : type.toLowerCase());
+                        : toAsciiLowerCase(type));
                 if (type == null) {
                     throw reporter.fatal("Unable to guess the media type of "
                             + path
