@@ -34,34 +34,6 @@ public class NavigationItem {
 
     private static final String NCX = "http://www.daisy.org/z3986/2005/ncx/";
 
-    static String normalizeSpace(String str) {
-        boolean prevWasSpace = true;
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < str.length(); i++) {
-            char c = str.charAt(i);
-            switch (c) {
-                case ' ':
-                case '\t':
-                case '\r':
-                case '\n':
-                    if (prevWasSpace) {
-                        continue;
-                    }
-                    prevWasSpace = true;
-                    sb.append(' ');
-                    break;
-                default:
-                    prevWasSpace = false;
-                    sb.append(c);
-                    break;
-            }
-        }
-        if (sb.length() > 0 && sb.charAt(sb.length() - 1) == ' ') {
-            sb.setLength(sb.length() - 1);
-        }
-        return sb.toString();
-    }
-    
     static String parseNavLabel(Node node, Reporter reporter) {
         node = node.getFirstChild();
         while (node != null) {
@@ -69,7 +41,7 @@ public class NavigationItem {
                 node = node.getFirstChild();
                 while (node != null) {
                     if (NCX.equals(node.getNamespaceURI()) && "text".equals(node.getLocalName())) {
-                        return normalizeSpace(node.getTextContent());
+                        return Dir2Epub.normalizeSpace(node.getTextContent());
                     }
                     node = node.getNextSibling();
                 }
@@ -147,14 +119,14 @@ public class NavigationItem {
             boolean seenTitle = false;
             while (node != null) {
                 if (!seenTitle && XHTML.equals(node.getNamespaceURI()) && "a".equals(node.getLocalName())) {
-                    this.title = NavigationItem.normalizeSpace(node.getTextContent());
+                    this.title = Dir2Epub.normalizeSpace(node.getTextContent());
                     Element elt = (Element) node;
                     if (!elt.hasAttributeNS(null, "href")) {
                         throw reporter.fatal("<a> element in navigation hierarchy does not have an href attribute.");
                     }
                     this.href = Dir2Epub.urlToPath(elt.getAttributeNS(null, "href"), resPath, reporter);
                 } else if (!seenTitle && XHTML.equals(node.getNamespaceURI()) && "span".equals(node.getLocalName())) {
-                    this.title = NavigationItem.normalizeSpace(node.getTextContent());
+                    this.title = Dir2Epub.normalizeSpace(node.getTextContent());
                     this.href = null;
                 } else if (seenTitle && XHTML.equals(node.getNamespaceURI()) && "ol".equals(node.getLocalName())) {
                     this.sublist = NavigationItem.parseHtmlChildList(node, resPath, reporter);

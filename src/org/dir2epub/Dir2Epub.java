@@ -33,10 +33,12 @@ import java.util.Set;
 import nu.validator.htmlparser.impl.NCName;
 
 import org.dir2epub.navigation.NavigationDocument;
+import org.relaxng.datatype.DatatypeException;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.NamedNodeMap;
 import org.w3c.dom.Node;
+import org.whattf.datatype.Language;
 
 public class Dir2Epub {
 
@@ -108,6 +110,8 @@ public class Dir2Epub {
     private NavigationDocument navigation = null;
 
     private HashSet<Resource> documents = new HashSet<Resource>();
+
+    private final Set<String> ids = new HashSet<String>();
     
     private Element findUniqueChild(Element parent, String ns, String localName, String notFoundErr, String multipleErr, Reporter reporter) {
         Element child = null;
@@ -343,8 +347,11 @@ public class Dir2Epub {
         // EPUB makes this way too complicated!
         
         String title = null;
+        boolean opfTitle = false;
         String author = null;
+        boolean opfAuthor = false;
         String language = null;
+        boolean opfLanguage = true;
         String guid = null;
         
         // id
@@ -369,12 +376,106 @@ public class Dir2Epub {
         
         // language
         
+        HashSet<Node> remove = new HashSet<Node>();
         for (Node n = metadata.getFirstChild(); n != null; n = n.getNextSibling()) {
             if (DC.equals(n.getNamespaceURI()) && "language".equals(n.getLocalName())) {
                String lang = checkLang(n.getTextContent());
-               // TODO
+               if (lang == null) {
+                   reporter.err("Removing bogus <dc:language>: " + normalizeSpace(n.getTextContent()) + ".");
+                   remove.add(n);
+               } else {
+                   language = lang;
+                   opfLanguage = true;
+                   // Just take the first one
+                   break;
+               }
             }
         }
+        for (Node node : remove) {
+            metadata.removeChild(node);
+        }
+        
+        // It's crazy how EPUB complicates basic stuff like title and author
+        // and made them even worse in EPUB3. Sad.
+        
+        // title
+        Element firstTitle = null;
+        Element firstTitleWithoutRefinement = null;
+        Element mainTitle = null;
+        boolean reorder = false;
+        titleloop: for (Node n = metadata.getFirstChild(); n != null; n = n.getNextSibling()) {
+            if (DC.equals(n.getNamespaceURI()) && "title".equals(n.getLocalName())) {
+                Element titleElt = (Element) n;
+                if (firstTitle == null) {
+                    firstTitle = titleElt;
+                }
+                String id = titleElt.getAttributeNS(null, "id");
+                if (id.length() > 0) {
+                    String idRef = opf.getPath() + "#" + id;
+                    for (Node m = metadata.getFirstChild(); m != null; m = m.getNextSibling()) {
+                        if (ONS.equals(m.getNamespaceURI()) && "meta".equals(m.getLocalName())) {
+                            Element metaElt = (Element) m;
+                            String refines = urlToPath(metaElt.getAttributeNS(null, "refines"), opf.getPath(), reporter);
+                            if (refines.equals(idRef)
+                                    && "title-type".equals(metaElt.getAttributeNS(
+                                            null, "property"))) {
+                                if ("main".equals(trimWhiteSpace(metaElt.getTextContent()))) {
+                                    if (mainTitle == null) {
+                                        if (firstTitle != titleElt) {
+                                            reorder = true;
+                                            reporter.warn("The main title is not the first <dc:title> element. EPUB2 reading systems and EPUB3 reading systems would disagree on the title. Reording elements.");
+                                        }
+                                        mainTitle = titleElt;
+                                    } else {
+                                        reporter.err("Multiple main titles in OPF.");
+                                    }
+                                }
+                                // We have refinement. May or may not be "main".
+                                continue titleloop;
+                            }
+                        }
+                    }
+                }
+                if (firstTitleWithoutRefinement == null) {
+                    firstTitleWithoutRefinement = titleElt;
+                }
+            }
+        }
+        boolean refine = false;
+        if (mainTitle == null) {
+            refine = true;
+            mainTitle = firstTitleWithoutRefinement;
+        }
+        if (mainTitle == null) {
+            refine = true;
+            mainTitle = dom.createElementNS(DC, "dc:title");
+            metadata.insertBefore(mainTitle, metadata.getFirstChild());
+        } else {
+            String content = normalizeSpace(mainTitle.getTextContent());
+            if (content.length() > 0) {
+                title = content;
+                opfTitle = true;
+            }
+        }
+        if (reorder) {
+            metadata.insertBefore(mainTitle, metadata.getFirstChild());            
+        }
+        if (refine) {
+            String id = mainTitle.getAttributeNS(null, "id");
+            if (id.length() == 0) {
+                id = generateId("title");
+            }
+            mainTitle.setAttributeNS(null, "id", id);
+            Element meta = dom.createElementNS(ONS, "meta");
+            meta.setAttributeNS(null, "refines", "#" + id);
+            meta.setAttributeNS(null, "property", "title-type");
+            meta.setTextContent("main");
+            metadata.insertBefore(meta, mainTitle.getNextSibling());
+        }
+        
+        // author
+        
+        
         
         // TODO Generate NCX (check existing docTitle, version, etc.)
         
@@ -400,11 +501,16 @@ public class Dir2Epub {
         }
         w.close();
     }
-    
+
     private String checkLang(String lang) {
         lang = toAsciiLowerCase(trimWhiteSpace(lang));
-        // TODO
-        return null;
+        try {
+            Language.THE_INSTANCE.checkValid(lang);
+        } catch (DatatypeException e) {
+            reporter.err(e.getMessage());
+            return null;
+        }
+        return lang;
     }
 
     public String toAsciiLowerCase(String str) {
@@ -419,6 +525,34 @@ public class Dir2Epub {
         return sb.toString();
     }
 
+    public static String normalizeSpace(String str) {
+        boolean prevWasSpace = true;
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < str.length(); i++) {
+            char c = str.charAt(i);
+            switch (c) {
+                case ' ':
+                case '\t':
+                case '\r':
+                case '\n':
+                    if (prevWasSpace) {
+                        continue;
+                    }
+                    prevWasSpace = true;
+                    sb.append(' ');
+                    break;
+                default:
+                    prevWasSpace = false;
+                    sb.append(c);
+                    break;
+            }
+        }
+        if (sb.length() > 0 && sb.charAt(sb.length() - 1) == ' ') {
+            sb.setLength(sb.length() - 1);
+        }
+        return sb.toString();
+    }
+    
     private String trimWhiteSpace(String str) {
         int firstNonWhiteSpace = 0;
         for (int i = 0; i < str.length(); i++) {
@@ -710,11 +844,6 @@ public class Dir2Epub {
         Element manifest = findUniqueChild(root, ONS, "manifest", null, "Multiple <manifest> elements in " + opf.getPath() + ".", reporter);
         assert manifest != null: "ensureManifest should have created manifest!";
 
-        // Collect ids. This intentionally happens before items removals so 
-        // that dangling spine references result in errors without an 
-        // opportunity to match a newly-generated id that happens to be the
-        // same as a removed id.
-        Set<String> ids = new HashSet<String>();
         Node current = root;
         Node next;
         idloop: for (;;) {
@@ -839,7 +968,7 @@ public class Dir2Epub {
                 ids.add("style");
             } else {
                 Resource resource = outputResources.get(manifestUrlToPath(element.getAttributeNS(null, "href")));
-                String id = generateId(resource, ids);
+                String id = generateId(resource);
                 element.setAttributeNS(null, "id", id);
                 ids.add(id);
             }
@@ -860,8 +989,12 @@ public class Dir2Epub {
         inputResources.clear();
     }
 
-    private String generateId(Resource resource, Set<String> ids) {
+    private String generateId(Resource resource) {
         String name = resource.getFileNameWithoutExtension();
+        return generateId(name);
+    }
+
+    private String generateId(String name) {
         StringBuilder id = new StringBuilder();
         char first = name.charAt(0);
         if (NCName.isNCNameStart(first)) {
@@ -883,7 +1016,6 @@ public class Dir2Epub {
         }
         return id.toString();
     }
-
 
     private String joinSet(Set<String> props) {
         StringBuilder builder = new StringBuilder();

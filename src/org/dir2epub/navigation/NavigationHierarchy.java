@@ -21,6 +21,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 
+import org.dir2epub.Dir2Epub;
 import org.dir2epub.Reporter;
 import org.dir2epub.Resource;
 import org.w3c.dom.Element;
@@ -52,7 +53,7 @@ public class NavigationHierarchy {
                 if (XHTML.equals(node.getNamespaceURI())) {
                     String local = node.getLocalName();
                     if (!seenHeading && ("h1".equals(local) || "h2".equals(local) || "h3".equals(local) || "h4".equals(local) || "h5".equals(local) || "h6".equals(local) || "hgroup".equals(local))) {
-                        this.title = NavigationItem.normalizeSpace(node.getTextContent());
+                        this.title = Dir2Epub.normalizeSpace(node.getTextContent());
                     } else if ("ol".equals(local)) {
                         this.list = NavigationItem.parseHtmlChildList(node, resPath, reporter);
                     } else {
